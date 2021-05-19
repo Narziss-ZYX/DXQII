@@ -148,6 +148,7 @@ struct SplitFloat {
 };
 
 uint8_t g_bUping = 0;
+uint16_t g_upstep = 100;
 
 /* USER CODE END Variables */
 /* Definitions for MainTask */
@@ -294,6 +295,7 @@ void StartMainTask(void *argument) {
     }
     uint32_t dstick = 0;
     uint32_t mputick = 0;
+    uint32_t uptick = 0;
     /* Infinite loop */
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "EndlessLoop"
@@ -375,11 +377,18 @@ void StartMainTask(void *argument) {
         } else {
             num[0] = num[1] = num[2] = num[3] = ' ';
         }
-
-        if(HC05_IsConn()&&g_bUping)
-        {
-            char buf[100];
-//            sprintf(buf,"T:%d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%d.%d %d.%d %d.%d,W:%d",)
+        if (HC05_IsConn() && g_bUping) {
+            if(osKernelGetTickCount()>=uptick+g_upstep)
+            {
+                uptick = osKernelGetTickCount();
+                char buf[100];
+                sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,W:%d\n",
+                        split_float(temp).integer, split_float(temp).decimal, ax, ay, az, gx, gy, gz,
+                        split_float(fAX).integer, split_float(fAX).decimal, split_float(fAY).integer,
+                        split_float(fAY).decimal,
+                        split_float(fAZ).integer, split_float(fAZ).decimal, (tempwarn ? 1 : 0) + (mpuwarn ? 2 : 0));
+                USendStr(&huart2, (uint8_t *) buf, strlen(buf));
+            }
         }
         osDelay(1);
     }
