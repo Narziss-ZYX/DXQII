@@ -90,21 +90,7 @@ unsigned char TAB_zheng[128] = {    /* 郑 0xd6a3*/
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-//#define SHOW_ADLIGHT 2
-//#define  SHOW_LINES 3
-//#define SHOW_WIFI 4
-//#define TEST_LEDAD 0
-//#define TEST_ACC 1
-//#define TEST_GYRO 2
-//uint8_t g_showidx = SHOW_ADLIGHT; //GUI索引显示
-//uint8_t g_testidx = TEST_LEDAD; //系统测试功能索引
-//uint8_t g_ledstat = 0x01; //流水灯状态
-//uint8_t g_mpuok = 0; //陀螺仪初始状态
-//
-//#define MAX_DATA_LEN 77
-//uint8_t g_fax_data[MAX_DATA_LEN];
-//uint8_t g_fay_data[MAX_DATA_LEN];
-//uint8_t g_faz_data[MAX_DATA_LEN];
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -119,16 +105,25 @@ int g_ws = WS_LOGO;
 uint32_t intick = 0;
 uint32_t beeptick = 0;
 
-volatile float temp = 0;
+volatile float temp = 0; //温度
+float tempLmt = 29.0f; //温度上限
 
+//报警标志位
 uint8_t tempwarn = 0;
 uint8_t mpuwarn = 0;
 uint32_t warntick = 0;
 
-uint8_t num[4] = {0};
+uint8_t num[4] = {0}; //数码管显示
 int T_integer = 0;
 int T_decimal = 0;
-uint8_t page_index = 1;
+uint8_t page_index = 1; //翻页控制
+
+uint8_t g_bUping = 0;
+uint16_t g_upstep = 100; //上传时间
+
+uint8_t g_mpustep = 7; //震动检测灵敏度
+uint8_t g_warntime = 30; //报警时长
+uint8_t g_funcidx = 0; //参数设置功能索引
 
 #define MAX_DATALEN 80
 
@@ -147,16 +142,13 @@ struct SplitFloat {
     int decimal;
 };
 
-uint8_t g_bUping = 0;
-uint16_t g_upstep = 100;
-
 /* USER CODE END Variables */
 /* Definitions for MainTask */
 osThreadId_t MainTaskHandle;
 const osThreadAttr_t MainTask_attributes = {
         .name = "MainTask",
-        .priority = (osPriority_t) osPriorityNormal,
-        .stack_size = 512 * 4
+        .priority = (osPriority_t) osPriorityAboveNormal,
+        .stack_size = 1024 * 4
 };
 /* Definitions for KeyTask */
 osThreadId_t KeyTaskHandle;
@@ -307,6 +299,7 @@ void StartMainTask(void *argument) {
             T_integer = (int) ft;
             T_decimal = (int) ((ft - T_integer) * 100);
             if (ft < 125) {
+//                printf("temp:%d.%d", T_integer, T_decimal);
                 temp = ft;
                 //温度数据保存
                 if (cTemp < MAX_DATALEN)
@@ -315,9 +308,8 @@ void StartMainTask(void *argument) {
                     memcpy((void *) vTemp, (void *) (vTemp + 1), sizeof(vTemp[0]) * (MAX_DATALEN - 1));
                     vTemp[MAX_DATALEN - 1] = temp;
                 }
-                if (temp >= 35) {
+                if (temp >= tempLmt) {
                     tempwarn = 1;
-                    printf("temp:%d.%d", T_integer, T_decimal);
                 }
             }
         }
@@ -346,24 +338,25 @@ void StartMainTask(void *argument) {
                     vYaw[MAX_DATALEN - 1] = fAZ;
                 }
                 /*--------------------------震动检测--------------------------*/
-                if (gx * gx + gy * gy + gz * gz > 3000) {
+                if (g_mpustep > 0 && (gx * gx + gy * gy + gz * gz > 1000 * (10 - g_mpustep))) {  //3000
                     mpuWarn_cnt++;
-                }
-                if (mpuWarn_cnt > 15) {
-                    mpuwarn = 1;
+                    if (mpuWarn_cnt > 15) {
+                        mpuwarn = 1;
+                        mpuWarn_cnt = 0;
+                    }
+                } else
                     mpuWarn_cnt = 0;
-                }
             }
         }
         //报警时30s倒计时
-        if (tempwarn || mpuwarn) {
+        if ((tempwarn || mpuwarn) && g_warntime > 0) {
             if (0 == warntick)
                 warntick = osKernelGetTickCount();
-            else if (osKernelGetTickCount() >= warntick + 30000) {  //30000数值需修改
+            else if (osKernelGetTickCount() >= warntick + 1000 * g_warntime) {  //30000数值需修改
                 tempwarn = mpuwarn = 0;
                 warntick = 0;
             } else {
-                uint32_t tick = warntick + 30000 - osKernelGetTickCount();
+                uint32_t tick = warntick + 1000 * g_warntime - osKernelGetTickCount();
                 num[0] = (tick / 10000) % 10;
                 num[1] = (tick / 1000) % 10;
                 num[2] = (tick / 100) % 10;
@@ -378,8 +371,7 @@ void StartMainTask(void *argument) {
             num[0] = num[1] = num[2] = num[3] = ' ';
         }
         if (HC05_IsConn() && g_bUping) {
-            if(osKernelGetTickCount()>=uptick+g_upstep)
-            {
+            if (osKernelGetTickCount() >= uptick + g_upstep) {
                 uptick = osKernelGetTickCount();
                 char buf[100];
                 sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,W:%d\n",
@@ -468,6 +460,44 @@ void StartKeyTask(void *argument) {
                             Init_HC05();
                         } else if (KEY4 == key)
                             g_ws = WS_GUI1;
+                        else if (KEY5 == key) {
+                            ++g_funcidx;
+                            g_funcidx %= 4;
+                        } else if (KEY2 == key) {
+                            if (0 == g_funcidx) {
+                                if (tempLmt > 0)
+                                    tempLmt -= 1;
+                            }
+                            if (1 == g_funcidx) {
+                                if (g_mpustep > 0)
+                                    --g_mpustep;
+                            }
+                            if (2 == g_funcidx) {
+                                if (g_warntime > 0)
+                                    --g_warntime;
+                            }
+                            if (3 == g_funcidx) {
+                                if (g_upstep > 100)
+                                    g_upstep -= 100;
+                            }
+                        } else if (KEY3 == key) {
+                            if (0 == g_funcidx) {
+                                if (tempLmt < 90)
+                                    tempLmt += 1;
+                            }
+                            if (1 == g_funcidx) {
+                                if (g_mpustep < 9)
+                                    ++g_mpustep;
+                            }
+                            if (2 == g_funcidx) {
+                                if (g_warntime < 60)
+                                    ++g_warntime;
+                            }
+                            if (3 == g_funcidx) {
+                                if (g_upstep < 10000)
+                                    g_upstep += 100;
+                            }
+                        }
                         break;
                     case WS_START:
                         g_ws = WS_LOGO;
@@ -707,13 +737,18 @@ void DrawGUI2(void) {
         case 1: {
             float tempMin = 25;
             float tempMax = 35;
-            float tempLmt = 30;
+            int tt = (((int) (temp) + 2) / 5) * 5;
+            tempMin = tt - 5;
+            tempMax = tt + 5;
             float dh = sh / (tempMax - tempMin);
             float_data = split_float(temp);  //温度
             sprintf(buf, "温度：%d.%d℃", float_data.integer, float_data.decimal);
             GUI_DispStringAt(buf, 50, 0);
-            for (i = 0; i < MAX_DATALEN; i += 6) {
-                GUI_DrawHLine(oy - (tempLmt - tempMin) * dh, ox + i, ox + i + 3);
+            if (tempLmt >= tempMin && tempLmt <= tempMax) {
+                printf("tt:%d\r\n",tt);
+                for (i = 0; i < MAX_DATALEN; i += 6) {
+                    GUI_DrawHLine(oy - (tempLmt - tempMin) * dh, ox + i, ox + i + 3);
+                }
             }
             for (i = 0; i < cTemp && i < MAX_DATALEN; ++i) {
                 GUI_DrawLine(ox + i - 1, oy - (vTemp[i - 1] - tempMin) * dh, ox + i, oy - (vTemp[i] - tempMin) * dh);
@@ -797,6 +832,7 @@ void DrawGUI3(void) {
 }
 
 void DrawGUI4(void) {
+    char buf[20];
     GUI_Clear();
     GUI_SetFont(&GUI_FontHZ_SimSun_12);
     GUI_DispStringAt("实时监测", 0, 0);
@@ -808,26 +844,48 @@ void DrawGUI4(void) {
     GUI_DispStringAt("K1︽ K2《 K3》 K4︾", 0, 52);
     GUI_DrawHLine(52, 0, 128);
     GUI_DrawVLine(48, 0, 52);
+
+    GUI_DispStringAt("温度上限:", 50, 0);
+    GUI_DispStringAt("震动灵敏度:", 50, 13);
+    GUI_DispStringAt("报警时长:", 50, 26);
+    GUI_DispStringAt("上传间隔:", 50, 39);
+
+    sprintf(buf, "%d", (int) tempLmt);
+    if (0 == g_funcidx) {
+        GUI_SetColor(GUI_COLOR_BLACK);
+    }
+    GUI_DispStringAt(buf, 104, 0);
+    GUI_SetColor(GUI_COLOR_WHITE);
+
+    sprintf(buf, "%d", g_mpustep);
+    if (1 == g_funcidx) {
+        GUI_SetColor(GUI_COLOR_BLACK);
+    }
+    GUI_DispStringAt(buf, 116, 13);
+    GUI_SetColor(GUI_COLOR_WHITE);
+
+    sprintf(buf, "%dS", g_warntime);
+    if (2 == g_funcidx) {
+        GUI_SetColor(GUI_COLOR_BLACK);
+    }
+    GUI_DispStringAt(buf, 104, 26);
+    GUI_SetColor(GUI_COLOR_WHITE);
+
+    sprintf(buf, "%d.%dS", split_float(g_upstep / 1000.0f).integer, split_float(g_upstep / 1000.0f).decimal);
+    if (3 == g_funcidx) {
+        GUI_SetColor(GUI_COLOR_BLACK);
+    }
+    GUI_DispStringAt(buf, 104, 39);
+    GUI_SetColor(GUI_COLOR_WHITE);
+
     GUI_Update();
 }
 
-void ShowLines() {
-    char str[30];
-    GUI_Clear();
-    GUI_DrawHLine(49, 0, 128);
-    GUI_DrawVLine(49, 0, 49);
-
-    GUI_SetFont(&GUI_FontHZ_SimSun_12);
-    GUI_DispStringAt("动态曲线", 1, 24);
-
-    GUI_SetColor(GUI_COLOR_BLACK);
-    GUI_DispStringAt("系统测试", 1, 0);
-    GUI_DispStringAt("调试灯", 1, 12);
-    GUI_DispStringAt("无线通信", 1, 36);
-    GUI_SetColor(GUI_COLOR_WHITE);
-    GUI_DispStringAt("K1︽ K2《 K3》 K4︾", 0, 52);
-}
-
+/**
+ * @brief 浮点数转换成整数部分和小数部分，保留一位小数
+ * @param 浮点数
+ * @return 返回结构体
+ */
 struct SplitFloat split_float(float data) {
     struct SplitFloat int_decimal;
     float data1 = fabs(data);
