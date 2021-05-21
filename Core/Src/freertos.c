@@ -125,6 +125,9 @@ uint8_t g_mpustep = 7; //震动检测灵敏度
 uint8_t g_warntime = 30; //报警时长
 uint8_t g_funcidx = 0; //参数设置功能索引
 
+uint32_t HC05_RevLen = 0;  //接受数据长度
+uint32_t HC05_SendLen = 0;  //发送数据长度
+
 #define MAX_DATALEN 80
 
 float vTemp[MAX_DATALEN];
@@ -340,7 +343,7 @@ void StartMainTask(void *argument) {
                 /*--------------------------震动检测--------------------------*/
                 if (g_mpustep > 0 && (gx * gx + gy * gy + gz * gz > 1000 * (10 - g_mpustep))) {  //3000
                     mpuWarn_cnt++;
-                    if (mpuWarn_cnt > 15) {
+                    if (mpuWarn_cnt > 8) {
                         mpuwarn = 1;
                         mpuWarn_cnt = 0;
                     }
@@ -379,6 +382,7 @@ void StartMainTask(void *argument) {
                         split_float(fAX).integer, split_float(fAX).decimal, split_float(fAY).integer,
                         split_float(fAY).decimal,
                         split_float(fAZ).integer, split_float(fAZ).decimal, (tempwarn ? 1 : 0) + (mpuwarn ? 2 : 0));
+                HC05_SendLen += strlen(buf);
                 USendStr(&huart2, (uint8_t *) buf, strlen(buf));
             }
         }
@@ -407,7 +411,7 @@ void StartKeyTask(void *argument) {
             if (osKernelGetTickCount() >= keytick + 20) {
                 keytick = osKernelGetTickCount();
                 uint8_t key = ScanKey();
-                if (KEY6 == key)
+                if (KEY6 == key && g_ws != WS_GUI3)
                     g_ws = WS_START;//返回启动界面
                 switch (g_ws) {
                     case WS_LOGO:
@@ -452,6 +456,10 @@ void StartKeyTask(void *argument) {
                             if (1 == page_index) {
                                 Init_HC05();
                             }
+                        } else if (KEY6 == key) {
+                            page_index = (page_index == 1) ? 2 : 1;
+                        } else if (KEY5 == key && 2 == page_index) {
+                            HC05_RevLen = HC05_SendLen = 0;
                         }
                         break;
                     case WS_GUI4:
@@ -543,7 +551,11 @@ void StartUartTask(void *argument) {
         }
         HC05_Proc();
         if (hc05.recv_len > 0) {
-            printf("%s", hc05.recv_data);
+            if (hc05.bat == 0)  //不在AT模式下
+            {
+                HC05_RevLen += hc05.recv_len - 1;
+            }
+            printf("byte:%lu,%s", hc05.recv_len - 1, hc05.recv_data);
             hc05.recv_len = 0;
         }
         osDelay(1);
@@ -604,10 +616,53 @@ void StartGUITask(void *argument) {
 /* USER CODE END Header_StartGetDataTask */
 void StartGetDataTask(void *argument) {
     /* USER CODE BEGIN StartGetDataTask */
+    static uint32_t led1_tick = 0;
+    static uint32_t led2_tick = 0;
+    static uint32_t old_send = 0;
+    static uint32_t old_rev = 0;
+    uint8_t rev_flag = 0;
+    uint8_t send_flag = 0;
+    int i = 0;
+    int j = 0;
+    static uint8_t leds_sta = 0x00;
     /* Infinite loop */
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "EndlessLoop"
     for (;;) {
+        if (HC05_RevLen > old_rev) {
+            rev_flag = 1;
+        }
+        if (HC05_SendLen > old_send) {
+            send_flag = 1;
+        }
+        if (send_flag) {
+            if (osKernelGetTickCount() >= led1_tick + 100) {
+                leds_sta ^= 0x80;  //第一位翻转
+                led1_tick = osKernelGetTickCount();
+                j++;
+            }
+            if (j >= 2) {
+                j = 0;
+                send_flag = 0;
+            }
+        }
+        if (rev_flag) {
+            if (osKernelGetTickCount() >= led2_tick + 50) {
+                leds_sta ^= 0x40;  //第二位翻转
+                led2_tick = osKernelGetTickCount();
+                i++;
+            }
+            if (i >= 2) {
+                i = 0;
+                rev_flag = 0;
+            }
+        }
+        if (g_ws != WS_START && g_ws != WS_LOGO)
+            SetLeds(leds_sta);
+        if (old_send != HC05_SendLen)
+            old_send = HC05_SendLen;
+        if (old_rev != HC05_RevLen)
+            old_rev = HC05_RevLen;
         osDelay(1);
     }
 #pragma clang diagnostic pop
@@ -745,7 +800,7 @@ void DrawGUI2(void) {
             sprintf(buf, "温度：%d.%d℃", float_data.integer, float_data.decimal);
             GUI_DispStringAt(buf, 50, 0);
             if (tempLmt >= tempMin && tempLmt <= tempMax) {
-                printf("tt:%d\r\n",tt);
+                printf("tt:%d\r\n", tt);
                 for (i = 0; i < MAX_DATALEN; i += 6) {
                     GUI_DrawHLine(oy - (tempLmt - tempMin) * dh, ox + i, ox + i + 3);
                 }
@@ -814,6 +869,7 @@ void DrawGUI2(void) {
 }
 
 void DrawGUI3(void) {
+    char buf[20];
     GUI_Clear();
     GUI_SetFont(&GUI_FontHZ_SimSun_12);
     GUI_DispStringAt("实时监测", 0, 0);
@@ -825,9 +881,21 @@ void DrawGUI3(void) {
     GUI_DispStringAt("K1︽ K2《 K3》 K4︾", 0, 52);
     GUI_DrawHLine(52, 0, 128);
     GUI_DrawVLine(48, 0, 52);
-    GUI_DispStringAt((char *) hc05.name, 50, 0);
-    GUI_DispStringAt(HC05_IsConn() ? "已连接" : "未连接", 50, 16);
-    GUI_DispStringAt(g_bUping ? "上传中" : "未上传", 50, 32);
+    switch (page_index) {
+        case 1:
+            GUI_DispStringAt((char *) hc05.name, 50, 0);
+            GUI_DispStringAt(HC05_IsConn() ? "已连接" : "未连接", 50, 16);
+            GUI_DispStringAt(g_bUping ? "上传中" : "未上传", 50, 32);
+            break;
+        case 2:
+            sprintf(buf, "发送:%lu", HC05_SendLen);
+            GUI_DispStringAt(buf, 50, 16);
+            sprintf(buf, "接收:%lu", HC05_RevLen);
+            GUI_DispStringAt(buf, 50, 32);
+            break;
+        default:
+            break;
+    }
     GUI_Update();
 }
 
