@@ -18,6 +18,8 @@
   */
 /* USER CODE END Header */
 
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "EndlessLoop"
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
 #include "task.h"
@@ -37,6 +39,7 @@
 #include "Display_3D.h"
 #include "comm.h"
 #include "HC05.h"
+#include "stdlib.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -106,7 +109,7 @@ uint32_t intick = 0;
 uint32_t beeptick = 0;
 
 volatile float temp = 0; //温度
-float tempLmt = 29.0f; //温度上限
+float tempLmt = 31.0f; //温度上限
 
 //报警标志位
 uint8_t tempwarn = 0;
@@ -377,11 +380,13 @@ void StartMainTask(void *argument) {
             if (osKernelGetTickCount() >= uptick + g_upstep) {
                 uptick = osKernelGetTickCount();
                 char buf[100];
-                sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,W:%d\n",
+                sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,S:%3d %3d %3d %2d.%d,W:%d\n",
                         split_float(temp).integer, split_float(temp).decimal, ax, ay, az, gx, gy, gz,
                         split_float(fAX).integer, split_float(fAX).decimal, split_float(fAY).integer,
                         split_float(fAY).decimal,
-                        split_float(fAZ).integer, split_float(fAZ).decimal, (tempwarn ? 1 : 0) + (mpuwarn ? 2 : 0));
+                        split_float(fAZ).integer, split_float(fAZ).decimal, (int)tempLmt,g_mpustep,g_warntime,g_upstep,
+                        split_float(g_upstep / 1000.0f).integer, split_float(g_upstep / 1000.0f).decimal,
+                        (tempwarn ? 1 : 0) + (mpuwarn ? 2 : 0));
                 HC05_SendLen += strlen(buf);
                 USendStr(&huart2, (uint8_t *) buf, strlen(buf));
             }
@@ -551,11 +556,35 @@ void StartUartTask(void *argument) {
         }
         HC05_Proc();
         if (hc05.recv_len > 0) {
+            printf("%s", hc05.recv_data);
+            char *pb = (char *) (hc05.recv_data);
+            char buf[40];
             if (hc05.bat == 0)  //不在AT模式下
             {
-                HC05_RevLen += hc05.recv_len - 1;
+                if ('P' == pb[0] && '1' == pb[1] && ':' == pb[2]) {
+                    //参数设设置
+                    tempLmt = atof(pb + 3);
+                    pb = strstr(pb, "P2:");
+                    if (pb) {
+                        g_mpustep = atoi(pb + 3);
+                        pb = strstr(pb, "P3:");
+                        if (pb) {
+                            g_warntime = atoi(pb + 3);
+                            pb = strstr(pb, "P4:");
+                            if (pb) {
+                                g_upstep = atoi(pb + 3);
+                                USendStr(&huart2, (uint8_t *) ("OK\n"), 3);
+                            }
+                        }
+
+                    }
+                } else if ('S' == pb[0] && 't' == pb[1] && 'a' == pb[2] && ':' == pb[3]) {
+                    g_bUping = atoi(pb + 4);
+                }
+                if (hc05.recv_len != 4)
+                    HC05_RevLen += hc05.recv_len - 1;
+//                    printf("byte:%lu,%s", hc05.recv_len - 1, hc05.recv_data);
             }
-            printf("byte:%lu,%s", hc05.recv_len - 1, hc05.recv_data);
             hc05.recv_len = 0;
         }
         osDelay(1);
@@ -970,19 +999,19 @@ struct SplitFloat split_float(float data) {
  * @param tune 声调（7阶）
  */
 void Beep(int time, int tune) {
-    static uint16_t TAB[] = {494, 523, 588, 660, 698, 784, 880, 988};
-    HAL_TIM_Base_Start(&htim3);
-    if (tune >= 1 && tune <= 7) {
-        int pre = 1000000 / TAB[tune];
-        __HAL_TIM_SET_AUTORELOAD(&htim3, pre);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pre / 2);
-        beeptick = osKernelGetTickCount() + time;
-        HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-    }
-    while (time-- > 0) {
-        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
-        osDelay(1);
-    }
+//    static uint16_t TAB[] = {494, 523, 588, 660, 698, 784, 880, 988};
+//    HAL_TIM_Base_Start(&htim3);
+//    if (tune >= 1 && tune <= 7) {
+//        int pre = 1000000 / TAB[tune];
+//        __HAL_TIM_SET_AUTORELOAD(&htim3, pre);
+//        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pre / 2);
+//        beeptick = osKernelGetTickCount() + time;
+//        HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+//    }
+//    while (time-- > 0) {
+//        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
+//        osDelay(1);
+//    }
 }
 
 /**
@@ -1019,3 +1048,5 @@ void Init_HC05(void) {
 /* USER CODE END Application */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+
+#pragma clang diagnostic pop
