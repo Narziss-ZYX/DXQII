@@ -380,12 +380,11 @@ void StartMainTask(void *argument) {
             if (osKernelGetTickCount() >= uptick + g_upstep) {
                 uptick = osKernelGetTickCount();
                 char buf[100];
-                sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,S:%3d %3d %3d %2d.%d,W:%d\n",
+                sprintf(buf, "T:%3d.%d,A:%6d %6d %6d,G:%6d %6d %6d,Z:%4d.%d %4d.%d %4d.%d,S:%3d %3d %3d %3d,W:%d\n",
                         split_float(temp).integer, split_float(temp).decimal, ax, ay, az, gx, gy, gz,
                         split_float(fAX).integer, split_float(fAX).decimal, split_float(fAY).integer,
                         split_float(fAY).decimal,
                         split_float(fAZ).integer, split_float(fAZ).decimal, (int)tempLmt,g_mpustep,g_warntime,g_upstep,
-                        split_float(g_upstep / 1000.0f).integer, split_float(g_upstep / 1000.0f).decimal,
                         (tempwarn ? 1 : 0) + (mpuwarn ? 2 : 0));
                 HC05_SendLen += strlen(buf);
                 USendStr(&huart2, (uint8_t *) buf, strlen(buf));
