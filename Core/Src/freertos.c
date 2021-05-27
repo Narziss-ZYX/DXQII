@@ -579,6 +579,7 @@ void StartUartTask(void *argument) {
                     }
                 } else if ('S' == pb[0] && 't' == pb[1] && 'a' == pb[2] && ':' == pb[3]) {
                     g_bUping = atoi(pb + 4);
+                    printf("g_bUping:%d",g_bUping);
                 }
                 if (hc05.recv_len != 4)
                     HC05_RevLen += hc05.recv_len - 1;
