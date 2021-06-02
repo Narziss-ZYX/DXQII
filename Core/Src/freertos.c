@@ -124,7 +124,7 @@ uint8_t page_index = 1; //翻页控制
 uint8_t g_bUping = 0;
 uint16_t g_upstep = 100; //上传时间
 
-uint8_t g_mpustep = 7; //震动检测灵敏度
+uint8_t g_mpustep = 1; //震动检测灵敏度
 uint8_t g_warntime = 30; //报警时长
 uint8_t g_funcidx = 0; //参数设置功能索引
 
@@ -344,9 +344,9 @@ void StartMainTask(void *argument) {
                     vYaw[MAX_DATALEN - 1] = fAZ;
                 }
                 /*--------------------------震动检测--------------------------*/
-                if (g_mpustep > 0 && (gx * gx + gy * gy + gz * gz > 1000 * (10 - g_mpustep))) {  //3000
+                if (g_mpustep > 0 && (gx * gx + gy * gy + gz * gz > 10000 * (10 - g_mpustep))) {  //3000
                     mpuWarn_cnt++;
-                    if (mpuWarn_cnt > 8) {
+                    if (mpuWarn_cnt > 5) {
                         mpuwarn = 1;
                         mpuWarn_cnt = 0;
                     }
@@ -520,7 +520,12 @@ void StartKeyTask(void *argument) {
             }
         }
         if (mpuwarn || tempwarn) {
-            if (Stop_Warn()) {  //停止报警
+            if(Stop_Warn())  //停止报警
+            {
+                if(tempwarn)  //如果是温度报警，重新设定温度上限
+                {
+                    tempLmt = 35;
+                }
                 mpuwarn = tempwarn = 0;
                 for (int i = 0; i < 4; i++)
                     num[i] = ' ';
@@ -999,19 +1004,19 @@ struct SplitFloat split_float(float data) {
  * @param tune 声调（7阶）
  */
 void Beep(int time, int tune) {
-//    static uint16_t TAB[] = {494, 523, 588, 660, 698, 784, 880, 988};
-//    HAL_TIM_Base_Start(&htim3);
-//    if (tune >= 1 && tune <= 7) {
-//        int pre = 1000000 / TAB[tune];
-//        __HAL_TIM_SET_AUTORELOAD(&htim3, pre);
-//        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pre / 2);
-//        beeptick = osKernelGetTickCount() + time;
-//        HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-//    }
-//    while (time-- > 0) {
-//        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
-//        osDelay(1);
-//    }
+    static uint16_t TAB[] = {494, 523, 588, 660, 698, 784, 880, 988};
+    HAL_TIM_Base_Start(&htim3);
+    if (tune >= 1 && tune <= 7) {
+        int pre = 1000000 / TAB[tune];
+        __HAL_TIM_SET_AUTORELOAD(&htim3, pre);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pre / 2);
+        beeptick = osKernelGetTickCount() + time;
+        HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    }
+    while (time-- > 0) {
+        HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
+        osDelay(1);
+    }
 }
 
 /**
